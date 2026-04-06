@@ -1,4 +1,5 @@
-const sgMail = require("@sendgrid/mail");
+const fetch = require('node-fetch');
+const { encodeBase64 } = require('js-base64');
 
 const ownerTemplate = ({ name, email, purpose, description }) => `
   <div style="font-family: Arial, sans-serif; padding: 20px; background:#f5f7fb;">
@@ -31,69 +32,110 @@ const userTemplate = ({ name, purpose }) => `
   </div>
 `;
 
+function encodeEmail(email) {
+  const str = email.replace(/\+/g, '-').replace(/\//g, '_');
+  return str.replace(/=+$/, '');
+}
+
+async function refreshAccessToken(clientId, clientSecret, refreshToken) {
+  const response = await fetch('https://oauth2.googleapis.com/token', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams({
+      client_id: clientId,
+      client_secret: clientSecret,
+      refresh_token: refreshToken,
+      grant_type: 'refresh_token',
+    }),
+  });
+  const data = await response.json();
+  if (!response.ok) {
+    throw new Error(`Token refresh failed: ${JSON.stringify(data)}`);
+  }
+  return data.access_token;
+}
+
+async function sendEmailGmail(accessToken, to, from, subject, html) {
+  const emailLines = [
+    `To: ${to}`,
+    `From: ${from}`,
+    `Subject: ${subject}`,
+    'Content-Type: text/html; charset=utf-8',
+    '',
+    html,
+  ];
+  const raw = emailLines.join('\r\n');
+  const encodedMessage = encodeEmail(Buffer.from(raw).toString('base64'));
+
+  const response = await fetch(
+    `https://gmail.googleapis.com/gmail/v1/users/me/messages/send`,
+    {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ raw: encodedMessage }),
+    }
+  );
+
+  const data = await response.json();
+  if (!response.ok) {
+    throw new Error(`Gmail API error: ${JSON.stringify(data)}`);
+  }
+  return data;
+}
+
 module.exports = async (req, res) => {
-  if (req.method === "OPTIONS") {
-    res.setHeader("Access-Control-Allow-Origin", "*");
-    res.setHeader("Access-Control-Allow-Methods", "POST, OPTIONS");
-    res.setHeader("Access-Control-Allow-Headers", "Content-Type");
+  if (req.method === 'OPTIONS') {
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
     return res.status(200).end();
   }
 
-  res.setHeader("Access-Control-Allow-Origin", "*");
-  res.setHeader("Access-Control-Allow-Methods", "POST, OPTIONS");
-  res.setHeader("Access-Control-Allow-Headers", "Content-Type");
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
 
-  if (req.method !== "POST") {
-    return res.status(405).json({ success: false, error: "Method not allowed" });
+  if (req.method !== 'POST') {
+    return res.status(405).json({ success: false, error: 'Method not allowed' });
   }
 
   const { name, email, purpose, description } = req.body;
 
   if (!name || !email || !purpose || !description) {
-    return res.status(400).json({ success: false, error: "All fields are required" });
+    return res.status(400).json({ success: false, error: 'All fields are required' });
   }
 
-  const apiKey = process.env.SENDGRID_API_KEY;
-  const ownerEmail = process.env.OWNER_EMAIL;
-  const fromEmail = process.env.FROM_EMAIL || "contact@app-to-contact.com";
+  const clientId = process.env.GMAIL_CLIENT_ID;
+  const clientSecret = process.env.GMAIL_CLIENT_SECRET;
+  const refreshToken = process.env.GMAIL_REFRESH_TOKEN;
+  const ownerEmail = process.env.OWNER_EMAIL || 'subhamsupriyamohapatra@gmail.com';
+  const fromEmail = process.env.FROM_EMAIL || 'subhamsupriyamohapatra@gmail.com';
 
-  return res.status(200).json({
-    debug: true,
-    envCheck: {
-      SENDGRID_API_KEY_set: !!apiKey,
-      SENDGRID_API_KEY_prefix: apiKey ? apiKey.substring(0, 10) : null,
-      OWNER_EMAIL: ownerEmail,
-      FROM_EMAIL: fromEmail,
-    }
-  });
-
-  if (!apiKey) {
-    return res.status(500).json({ success: false, error: "Email service not configured - SENDGRID_API_KEY missing" });
-  }
-
-  sgMail.setApiKey(apiKey);
-
-  try {
-    await sgMail.send({
-      to: ownerEmail,
-      from: fromEmail,
-      subject: `New Contact: ${purpose}`,
-      html: ownerTemplate({ name, email, purpose, description }),
-    });
-
-    await sgMail.send({
-      to: email,
-      from: fromEmail,
-      subject: "Thank You for Contacting Us",
-      html: userTemplate({ name, purpose }),
-    });
-
-    return res.status(200).json({ success: true, message: "Message sent successfully" });
-  } catch (error) {
+  if (!clientId || !clientSecret || !refreshToken) {
     return res.status(500).json({
       success: false,
-      error: "Failed to send message",
-      sendgridError: error?.response?.body || error.message
+      error: 'Gmail API credentials not configured',
+      envCheck: {
+        GMAIL_CLIENT_ID: !!clientId,
+        GMAIL_CLIENT_SECRET: !!clientSecret,
+        GMAIL_REFRESH_TOKEN: !!refreshToken,
+      },
     });
+  }
+
+  try {
+    const accessToken = await refreshAccessToken(clientId, clientSecret, refreshToken);
+
+    await sendEmailGmail(accessToken, ownerEmail, fromEmail, `New Contact: ${purpose}`, ownerTemplate({ name, email, purpose, description }));
+
+    await sendEmailGmail(accessToken, email, fromEmail, 'Thank You for Contacting Us', userTemplate({ name, purpose }));
+
+    return res.status(200).json({ success: true, message: 'Message sent successfully 🚀' });
+  } catch (error) {
+    console.error('Gmail API Error:', error.message);
+    return res.status(500).json({ success: false, error: 'Failed to send message', details: error.message });
   }
 };
