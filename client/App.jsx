@@ -4,7 +4,7 @@ import toast from "react-hot-toast";
 const API_URL =
   window.location.hostname === "localhost"
     ? "http://localhost:5000/api/contact"
-    : "https://app-to-contact-sa55.vercel.app/api/contact";
+    : "https://app-to-contact.vercel.app/api/contact";
 
 function App() {
   const [form, setForm] = useState({
