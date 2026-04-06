@@ -1,10 +1,8 @@
 {
-  "version": 2,
   "builds": [
     {
       "src": "client/package.json",
-      "use": "@vercel/static-build",
-      "config": { "distDir": "dist" }
+      "use": "@vercel/static-build"
     },
     {
       "src": "api/contact.js",
@@ -12,7 +10,9 @@
     }
   ],
   "routes": [
-    { "src": "/api/contact", "dest": "/api/contact.js" },
-    { "src": "/(.*)", "dest": "/client/index.html" }
+    {
+      "src": "/api/contact",
+      "dest": "/api/contact.js"
+    }
   ]
 }
