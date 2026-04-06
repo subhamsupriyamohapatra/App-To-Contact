@@ -1,4 +1,4 @@
-const nodemailer = require("nodemailer");
+const sgMail = require("@sendgrid/mail");
 
 const ownerTemplate = ({ name, email, purpose, description }) => `
   <div style="font-family: Arial, sans-serif; padding: 20px; background:#f5f7fb;">
@@ -53,32 +53,33 @@ module.exports = async (req, res) => {
     return res.status(400).json({ success: false, error: "All fields are required" });
   }
 
-  try {
-    const transporter = nodemailer.createTransport({
-      service: "gmail",
-      auth: {
-        user: process.env.EMAIL_USER,
-        pass: process.env.EMAIL_PASS,
-      },
-    });
+  if (!process.env.SENDGRID_API_KEY) {
+    console.error("SENDGRID_API_KEY is not set");
+    return res.status(500).json({ success: false, error: "Email service not configured" });
+  }
 
-    await transporter.sendMail({
-      from: process.env.EMAIL_USER,
-      to: process.env.EMAIL_USER,
+  sgMail.setApiKey(process.env.SENDGRID_API_KEY);
+
+  const FROM_EMAIL = process.env.FROM_EMAIL || "contact@app-to-contact.com";
+
+  try {
+    await sgMail.send({
+      to: process.env.OWNER_EMAIL || FROM_EMAIL,
+      from: FROM_EMAIL,
       subject: `New Contact: ${purpose}`,
       html: ownerTemplate({ name, email, purpose, description }),
     });
 
-    await transporter.sendMail({
-      from: process.env.EMAIL_USER,
+    await sgMail.send({
       to: email,
+      from: FROM_EMAIL,
       subject: "Thank You for Contacting Us",
       html: userTemplate({ name, purpose }),
     });
 
     return res.status(200).json({ success: true, message: "Message sent successfully" });
   } catch (error) {
-    console.error("Email Error:", error);
+    console.error("SendGrid Error:", error?.response?.body || error.message);
     return res.status(500).json({ success: false, error: "Failed to send message" });
   }
 };
